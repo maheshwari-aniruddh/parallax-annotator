@@ -37,6 +37,8 @@
   #right button{width:100%}
   .row{display:flex;gap:8px}
   .summary{padding:12px;background:#f6f7f8;border-radius:4px}
+  #saved{margin:0 0 12px}
+  #saved[hidden]{display:none}
   #title{font-size:13px;color:var(--muted);word-break:break-all}
   #count{font-size:18px;font-weight:600}
   label.small{font-size:13px;font-weight:600}
@@ -63,7 +65,8 @@
   <label class="btn">Add images<input class="pick" type="file" accept="image/*,.json" multiple hidden></label>
   <button id="export" class="run-btn">Download my annotations</button>
 </header>
-<ol class="steps"><li><b>1.</b> Drag a box around each fracture</li><li><b>2.</b> No fracture? Draw nothing</li><li><b>3.</b> Click <b>Done → next</b></li><li><b>4.</b> At the end, <b>Download my annotations</b> and email the file</li></ol>
+<ol class="steps"><li><b>1.</b> Drag a box around each fracture</li><li><b>2.</b> No fracture? Draw nothing</li><li><b>3.</b> Click <b>Done → next</b></li><li><b>4.</b> Whenever you stop, <b>Download my annotations</b> and email the file. You don't need to do all of them.</li></ol>
+<p id="saved" class="summary" hidden></p>
 
 <div class="wrap">
   <div class="panel"><div class="panel-head">Images</div><div id="list"></div></div>
@@ -87,8 +90,9 @@
     <li>Open the X-ray images.</li>
     <li>On each X-ray, drag a box around every fracture you see. If there is no fracture, draw nothing.</li>
     <li>Click <b>Done → next</b>.</li>
-    <li>At the end, click <b>Download my annotations</b> and email the file to Aniruddh.</li>
+    <li>Whenever you stop, click <b>Download my annotations</b> and email the file to Aniruddh.</li>
   </ol>
+  <p class="hint">You don't need to finish all of them: any number helps. You can send part now and the rest later.</p>
   <p class="hint">Optional: to see the AI model's predictions, put <b>parallax_model_predictions.json</b> (from the email) in the same folder as the X-rays, then click <b>Model's predictions ↗</b>. They open in a separate window. Please mark your own boxes first so the model doesn't influence you.</p>
   <div id="drop">Drag the X-ray images (or their folder) here<br>
     <label class="btn run-btn">Choose images…<input class="pick" type="file" accept="image/*,.json" multiple hidden></label>
@@ -302,12 +306,15 @@ document.onkeydown = e => {
   else if (e.key === 'Enter') { e.preventDefault(); $('done').click(); }
 };
 
+// Partial work is fine: an image counts once it is marked done OR has boxes (in case Done wasn't clicked).
 function exportJson() {
-  const n = Object.values(ann).filter(a => a.done).length;
-  if (!n) return alert('No images finished yet. Mark at least one image first.');
+  const n = Object.values(ann).filter(a => a.done || a.boxes.length).length;
+  if (!n) return alert('Nothing to download yet. Mark at least one image first.');
   const blob = new Blob([JSON.stringify({tool: 'parallax-annotator 1', exported: new Date().toISOString(), box_format: 'x1,y1,x2,y2 in image pixels', images: ann}, null, 1)], {type: 'application/json'});
   const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
   a.download = `parallax_annotations_${new Date().toISOString().slice(0, 10)}.json`; a.click();
+  $('saved').hidden = false;
+  $('saved').textContent = `Downloaded: ${n} image${n > 1 ? 's' : ''} annotated. You can email this file now, even if you haven't finished. If you do more later, download again and send the new file (it includes everything).`;
 }
 $('export').onclick = exportJson;
 render();
