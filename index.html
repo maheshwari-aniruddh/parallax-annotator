@@ -1,0 +1,243 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Parallax fracture annotator</title>
+<!-- ponytail: one static file, no server. Images never leave the doctor's computer; boxes autosave in
+     localStorage and come back to us as one downloaded JSON file. No move/resize: delete and redraw. -->
+<style>
+  :root{color-scheme:light;--g:#15803d;--b:#1d4ed8;--line:#e5e7eb;--mut:#6b7280}
+  *{box-sizing:border-box}
+  body{margin:0;font:15px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif;color:#111827;background:#f9fafb;height:100vh;display:flex;flex-direction:column}
+  header{display:flex;align-items:center;gap:16px;padding:10px 18px;background:#fff;border-bottom:1px solid var(--line)}
+  header b{font-size:17px}
+  #bar{flex:1;max-width:420px;height:10px;background:var(--line);border-radius:5px;overflow:hidden}
+  #bar i{display:block;height:100%;width:0;background:var(--g);transition:width .3s}
+  #progress{color:var(--mut);min-width:110px}
+  .wrap{flex:1;display:grid;grid-template-columns:220px 1fr 300px;min-height:0}
+  aside{background:#fff;overflow:auto;padding:14px}
+  #left{border-right:1px solid var(--line)}
+  #right{border-left:1px solid var(--line);display:flex;flex-direction:column;gap:10px}
+  main{background:#0b0b0c;display:flex;align-items:center;justify-content:center;min-height:0;position:relative}
+  canvas{cursor:crosshair;box-shadow:0 0 0 1px #333}
+  button,.btn{display:block;width:100%;padding:11px;font:inherit;font-weight:600;border:1px solid #d1d5db;border-radius:8px;background:#fff;cursor:pointer;text-align:center}
+  button:hover:not(:disabled),.btn:hover{filter:brightness(.96)}
+  button:disabled{opacity:.4;cursor:default}
+  .green{background:var(--g);border-color:var(--g);color:#fff;font-size:16px;padding:14px}
+  .blue{background:var(--b);border-color:var(--b);color:#fff}
+  .row{display:flex;gap:8px}.row>*{flex:1}
+  .card{border:1px solid var(--line);border-radius:10px;padding:12px}
+  .card h3{margin:0 0 4px;font-size:13px;color:var(--mut);text-transform:uppercase;letter-spacing:.05em}
+  #title{font-weight:600;word-break:break-all}
+  #count{font-size:20px;font-weight:700}
+  #list div{padding:6px 8px;border-radius:6px;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:14px;color:#374151}
+  #list div:hover{background:#f3f4f6}
+  #list div.cur{background:#dbeafe;color:#1e3a8a;font-weight:600}
+  #list div::before{content:"○ ";color:#9ca3af}
+  #list div.done::before{content:"✓ ";color:var(--g);font-weight:700}
+  textarea{width:100%;height:64px;font:inherit;padding:8px;border:1px solid #d1d5db;border-radius:8px;resize:vertical}
+  kbd{background:#f3f4f6;border:1px solid #d1d5db;border-radius:4px;padding:0 5px;font-size:12px}
+  .hint{color:var(--mut);font-size:13px}
+  /* full-screen welcome / finished screens */
+  .screen{position:fixed;inset:0;background:rgba(249,250,251,.97);display:flex;align-items:center;justify-content:center;z-index:5}
+  .screen[hidden]{display:none}
+  .box{background:#fff;border:1px solid var(--line);border-radius:16px;padding:32px 36px;max-width:560px;box-shadow:0 10px 30px rgba(0,0,0,.06)}
+  .box h1{margin:0 0 6px;font-size:24px}
+  .box ol{padding-left:20px;margin:14px 0 20px}
+  .box li{margin:6px 0}
+  #drop{border:2px dashed #9ca3af;border-radius:12px;padding:26px;text-align:center;color:var(--mut);margin-bottom:12px}
+  #drop.over{border-color:var(--b);background:#eff6ff;color:var(--b)}
+  #drop .btn{display:inline-block;width:auto;padding:12px 22px;margin-top:10px}
+</style>
+
+<header>
+  <b>Fracture annotator</b>
+  <div id="bar"><i></i></div><span id="progress"></span>
+  <span style="flex:1"></span>
+  <label class="btn" style="width:auto;padding:7px 14px">+ Add images<input class="pick" type="file" accept="image/*" multiple hidden></label>
+  <button id="export" class="blue" style="width:auto;padding:7px 14px">Download my annotations</button>
+</header>
+
+<div class="wrap">
+  <aside id="left"><div id="list"></div></aside>
+  <main><canvas id="cv"></canvas></main>
+  <aside id="right">
+    <div class="card"><h3>Image</h3><div id="title"></div><div id="count"></div></div>
+    <button id="done" class="green">No fracture → next</button>
+    <div class="hint">Drag on the X-ray to draw a box around each fracture. No boxes means no fracture.</div>
+    <div class="row"><button id="undo">Undo last box</button><button id="del" disabled>Delete selected</button></div>
+    <div class="row"><button id="prev">← Back</button><button id="next">Skip →</button></div>
+    <div class="card"><h3>Comment (optional)</h3><textarea id="note" placeholder="e.g. subtle distal radius fracture, or image too poor to judge"></textarea></div>
+    <div class="hint">Click a box to select it. Shortcuts: <kbd>Delete</kbd> remove box · <kbd>Ctrl/⌘ Z</kbd> undo · <kbd>←</kbd><kbd>→</kbd> move between images · <kbd>Enter</kbd> done.</div>
+    <div class="hint">Everything saves automatically in this browser. You can close the page and continue later by opening the same images again.</div>
+  </aside>
+</div>
+
+<div class="screen" id="welcome"><div class="box">
+  <h1>Mark wrist fractures</h1>
+  <div class="hint">Thank you for helping. This takes about 20 seconds per X-ray.</div>
+  <ol>
+    <li>Open the X-ray images.</li>
+    <li>On each X-ray, drag a box around every fracture you see, or none if there is no fracture.</li>
+    <li>Click the green button to go to the next image.</li>
+    <li>At the end, click <b>Download my annotations</b> and email the file to Aniruddh.</li>
+  </ol>
+  <div id="drop">Drag the X-ray images (or their folder) here<br>
+    <label class="btn blue">Choose images…<input class="pick" type="file" accept="image/*" multiple hidden></label>
+    <label class="btn">Choose a folder…<input class="pick" type="file" webkitdirectory hidden></label>
+  </div>
+  <div class="hint">The images stay on this computer. Only the boxes you draw go into the downloaded file.</div>
+</div></div>
+
+<div class="screen" id="finished" hidden><div class="box" style="text-align:center">
+  <h1>All done 🎉</h1>
+  <p>You have finished every image. Please download your annotations and email the file to Aniruddh.</p>
+  <button class="blue" onclick="exportJson()">Download my annotations</button>
+  <p><a href="#" onclick="finished.hidden=true;return false">Go back and review</a></p>
+</div></div>
+
+<script>
+const $ = id => document.getElementById(id), cv = $('cv'), ctx = cv.getContext('2d');
+const ann = JSON.parse(localStorage.getItem('parallax_ann') || '{}'); // filename -> {w,h,boxes:[[x1,y1,x2,y2]],done,note}
+const store = () => localStorage.setItem('parallax_ann', JSON.stringify(ann));
+let files = [], curName = null, img = null, sel = -1, drag = null, scale = 1;
+const cur = () => ann[curName];
+const idx = () => files.findIndex(f => f.name === curName);
+const isDone = f => ann[f.name]?.done;
+
+function add(list) {
+  for (const f of list) if (f.type.startsWith('image/') && !files.some(x => x.name === f.name)) files.push(f);
+  if (!files.length) return alert('No images found. Please choose JPG or PNG X-ray images.');
+  files.sort((a, b) => a.name.localeCompare(b.name));
+  $('welcome').hidden = true;
+  if (!curName) open(Math.max(0, files.findIndex(f => !isDone(f)))); else render();
+}
+document.querySelectorAll('.pick').forEach(p => p.onchange = e => { add([...e.target.files]); e.target.value = ''; });
+
+// drag-and-drop files or folders anywhere on the page
+async function walk(entry, out) {
+  if (entry.isFile) out.push(await new Promise(r => entry.file(r)));
+  else if (entry.isDirectory) {
+    const rd = entry.createReader(); let batch;
+    do { batch = await new Promise(r => rd.readEntries(r)); for (const e of batch) await walk(e, out); } while (batch.length);
+  }
+}
+document.ondragover = e => { e.preventDefault(); $('drop').classList.add('over'); };
+document.ondragleave = () => $('drop').classList.remove('over');
+document.ondrop = async e => {
+  e.preventDefault(); $('drop').classList.remove('over');
+  const out = [];
+  for (const it of e.dataTransfer.items) { const en = it.webkitGetAsEntry?.(); if (en) await walk(en, out); }
+  add(out);
+};
+
+function open(i) {
+  if (i < 0 || i >= files.length) return;
+  const f = files[i]; curName = f.name; sel = -1; img = null;
+  ann[curName] ??= {boxes: [], done: false, note: ''};
+  $('note').value = cur().note || ''; render();
+  const im = new Image();
+  im.onload = () => {
+    if (f.name !== curName) return; // user already moved on
+    img = im; cv.width = im.naturalWidth; cv.height = im.naturalHeight;
+    Object.assign(cur(), {w: cv.width, h: cv.height}); store(); fit();
+    URL.revokeObjectURL(im.src);
+  };
+  im.src = URL.createObjectURL(f);
+}
+
+// scale the X-ray to fill the viewer, enlarging small images too
+function fit() {
+  if (!img) return;
+  const m = cv.parentElement, pad = 24;
+  scale = Math.min((m.clientWidth - pad) / cv.width, (m.clientHeight - pad) / cv.height);
+  cv.style.width = cv.width * scale + 'px'; cv.style.height = cv.height * scale + 'px';
+  draw();
+}
+window.onresize = fit;
+
+function render() {
+  const done = files.filter(isDone).length;
+  $('progress').textContent = `${done} of ${files.length} done`;
+  $('bar').firstElementChild.style.width = (files.length ? 100 * done / files.length : 0) + '%';
+  $('list').innerHTML = '';
+  files.forEach((f, i) => {
+    const d = document.createElement('div'); d.textContent = f.name; d.title = f.name;
+    d.className = (f.name === curName ? 'cur ' : '') + (isDone(f) ? 'done' : '');
+    d.onclick = () => open(i); $('list').append(d);
+    if (f.name === curName) d.scrollIntoView({block: 'nearest'});
+  });
+  const n = cur()?.boxes.length || 0;
+  $('title').textContent = `${curName}  (${idx() + 1} of ${files.length})`;
+  $('count').textContent = (n ? `${n} fracture${n > 1 ? 's' : ''} marked` : 'No fracture marked') + (cur()?.done ? '  ✓' : '');
+  $('done').textContent = n ? `Done: ${n} fracture${n > 1 ? 's' : ''} → next` : 'No fracture → next';
+  $('del').disabled = sel < 0; $('undo').disabled = !n;
+  $('prev').disabled = idx() <= 0; $('next').disabled = idx() >= files.length - 1;
+}
+
+function draw() {
+  if (!img) return;
+  const px = 1 / scale; // keep lines and labels the same size on screen
+  ctx.drawImage(img, 0, 0); ctx.lineWidth = 2.5 * px; ctx.font = `bold ${14 * px}px system-ui`;
+  cur().boxes.forEach(([x1, y1, x2, y2], i) => {
+    const c = i === sel ? '#f59e0b' : '#22c55e';
+    ctx.setLineDash([]); ctx.strokeStyle = c; ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
+    const t = String(i + 1), tw = ctx.measureText(t).width + 10 * px, th = 19 * px, ty = Math.max(0, y1 - th);
+    ctx.fillStyle = c; ctx.fillRect(x1, ty, tw, th);
+    ctx.fillStyle = '#000'; ctx.fillText(t, x1 + 5 * px, ty + 14.5 * px);
+  });
+  if (drag) { ctx.strokeStyle = '#fff'; ctx.setLineDash([6 * px, 4 * px]); ctx.strokeRect(drag.x, drag.y, drag.x2 - drag.x, drag.y2 - drag.y); }
+}
+
+const pt = e => { const r = cv.getBoundingClientRect(); return {x: (e.clientX - r.left) / scale, y: (e.clientY - r.top) / scale}; };
+const clamp = (v, hi) => Math.max(0, Math.min(hi, v));
+cv.onmousedown = e => {
+  if (!img) return;
+  const p = pt(e), b = cur().boxes;
+  // clicking inside a box selects it (smallest wins); clicking elsewhere starts a new box
+  const hits = b.map((r, i) => [i, (r[2] - r[0]) * (r[3] - r[1])]).filter(([i]) => p.x >= b[i][0] && p.x <= b[i][2] && p.y >= b[i][1] && p.y <= b[i][3]);
+  sel = hits.length ? hits.sort((a, c) => a[1] - c[1])[0][0] : -1;
+  if (sel < 0) drag = {x: p.x, y: p.y, x2: p.x, y2: p.y};
+  draw(); render();
+};
+window.onmousemove = e => { if (!drag) return; const p = pt(e); drag.x2 = clamp(p.x, cv.width); drag.y2 = clamp(p.y, cv.height); draw(); };
+window.onmouseup = () => {
+  if (!drag) return;
+  const r = [Math.min(drag.x, drag.x2), Math.min(drag.y, drag.y2), Math.max(drag.x, drag.x2), Math.max(drag.y, drag.y2)].map(Math.round);
+  drag = null;
+  if ((r[2] - r[0]) * scale > 6 && (r[3] - r[1]) * scale > 6) { cur().boxes.push(r); store(); } // ignore stray clicks
+  draw(); render();
+};
+
+function edit(fn) { fn(cur().boxes); sel = -1; store(); draw(); render(); }
+$('del').onclick = () => sel >= 0 && edit(b => b.splice(sel, 1));
+$('undo').onclick = () => edit(b => b.pop());
+$('done').onclick = () => {
+  if (!curName) return;
+  cur().done = true; store();
+  const i = idx(), next = [...files.keys()].map(k => (i + 1 + k) % files.length).find(k => !isDone(files[k]));
+  if (next === undefined) { render(); $('finished').hidden = false; } else open(next);
+};
+$('prev').onclick = () => open(idx() - 1);
+$('next').onclick = () => open(idx() + 1);
+$('note').oninput = e => { cur().note = e.target.value; store(); };
+document.onkeydown = e => {
+  if (e.target.tagName === 'TEXTAREA' || !curName) return;
+  if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); $('del').click(); }
+  else if (e.key === 'z' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); $('undo').click(); }
+  else if (e.key === 'ArrowRight') open(idx() + 1);
+  else if (e.key === 'ArrowLeft') open(idx() - 1);
+  else if (e.key === 'Enter') { e.preventDefault(); $('done').click(); }
+};
+
+function exportJson() {
+  const n = Object.values(ann).filter(a => a.done).length;
+  if (!n) return alert('No images finished yet. Mark at least one image first.');
+  const blob = new Blob([JSON.stringify({tool: 'parallax-annotator 1', exported: new Date().toISOString(), box_format: 'x1,y1,x2,y2 in image pixels', images: ann}, null, 1)], {type: 'application/json'});
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+  a.download = `parallax_annotations_${new Date().toISOString().slice(0, 10)}.json`; a.click();
+}
+$('export').onclick = exportJson;
+render();
+</script>
+</html>
