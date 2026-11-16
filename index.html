@@ -113,16 +113,19 @@ const $ = id => document.getElementById(id), cv = $('cv'), ctx = cv.getContext('
 const ann = JSON.parse(localStorage.getItem('parallax_ann') || '{}'); // filename -> {w,h,boxes:[[x1,y1,x2,y2]],done,note}
 const store = () => localStorage.setItem('parallax_ann', JSON.stringify(ann));
 let files = [], curName = null, img = null, sel = -1, drag = null, scale = 1;
+// key = path inside the chosen folder ('135/A.PNG'); flat folders give plain filenames, as before.
+// Needed because every case folder holds the same names (A.PNG, L.PNG).
+const key = f => { const p = (f.webkitRelativePath || f.relPath || f.name).split('/').filter(Boolean); return p.length > 1 ? p.slice(1).join('/') : p[0]; };
 const cur = () => ann[curName];
-const idx = () => files.findIndex(f => f.name === curName);
-const isDone = f => ann[f.name]?.done;
+const idx = () => files.findIndex(f => key(f) === curName);
+const isDone = f => ann[key(f)]?.done;
 
 function add(list) {
   const json = list.filter(f => f.name.toLowerCase().endsWith('.json')); // the folder may also hold a saved annotations file
   json.forEach(f => f.text().then(t => loadPreds(t, true)));
-  for (const f of list) if (f.type.startsWith('image/') && !files.some(x => x.name === f.name)) files.push(f);
+  for (const f of list) if (f.type.startsWith('image/') && !files.some(x => key(x) === key(f))) files.push(f);
   if (!files.length) return json.length || alert('No images found. Please choose JPG or PNG X-ray images.');
-  files.sort((a, b) => a.name.localeCompare(b.name));
+  files.sort((a, b) => key(a).localeCompare(key(b), undefined, {numeric: true}));
   $('welcome').hidden = true;
   if (!curName) showImage(Math.max(0, files.findIndex(f => !isDone(f)))); else render();
 }
@@ -130,7 +133,7 @@ document.querySelectorAll('.pick').forEach(p => p.onchange = e => { add([...e.ta
 
 // drag-and-drop files or folders anywhere on the page
 async function walk(entry, out) {
-  if (entry.isFile) out.push(await new Promise(r => entry.file(r)));
+  if (entry.isFile) { const f = await new Promise(r => entry.file(r)); f.relPath = entry.fullPath; out.push(f); }
   else if (entry.isDirectory) {
     const rd = entry.createReader(); let batch;
     do { batch = await new Promise(r => rd.readEntries(r)); for (const e of batch) await walk(e, out); } while (batch.length);
@@ -147,12 +150,12 @@ document.ondrop = async e => {
 
 function showImage(i) {
   if (i < 0 || i >= files.length) return;
-  const f = files[i]; curName = f.name; sel = -1; img = null;
+  const f = files[i]; curName = key(f); sel = -1; img = null;
   ann[curName] ??= {boxes: [], done: false, note: ''};
   $('note').value = cur().note || ''; render(); drawModel();
   const im = new Image();
   im.onload = () => {
-    if (f.name !== curName) return; // user already moved on
+    if (key(f) !== curName) return; // user already moved on
     img = im; cv.width = im.naturalWidth; cv.height = im.naturalHeight;
     Object.assign(cur(), {w: cv.width, h: cv.height}); store(); fit();
     URL.revokeObjectURL(im.src);
@@ -238,10 +241,10 @@ function render() {
   $('bar').firstElementChild.style.width = (files.length ? 100 * done / files.length : 0) + '%';
   $('list').innerHTML = '';
   files.forEach((f, i) => {
-    const d = document.createElement('div'); d.textContent = f.name; d.title = f.name;
-    d.className = (f.name === curName ? 'cur ' : '') + (isDone(f) ? 'done' : '');
+    const d = document.createElement('div'); d.textContent = key(f); d.title = key(f);
+    d.className = (key(f) === curName ? 'cur ' : '') + (isDone(f) ? 'done' : '');
     d.onclick = () => showImage(i); $('list').append(d);
-    if (f.name === curName) d.scrollIntoView({block: 'nearest'});
+    if (key(f) === curName) d.scrollIntoView({block: 'nearest'});
   });
   const n = cur()?.boxes.length || 0;
   $('title').textContent = `${curName}  (${idx() + 1} of ${files.length})`;
